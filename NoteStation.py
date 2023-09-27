@@ -401,7 +401,7 @@ class NoteStationExport:
             if len(ignored):
                 print(f"The following {len(ignored)} documents were not uploaded:")
                 for note,doc,reason in ignored:
-                    print(f"{reason}: Note {title}: Document {doc}.")
+                    print(f"{reason}: Note {note}: Document {doc}.")
             print("Done")
             signal.signal(signal.SIGINT, original_sigint_handler)
 
