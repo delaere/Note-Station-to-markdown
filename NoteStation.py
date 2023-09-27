@@ -6,9 +6,22 @@ import pandoc
 import json
 import yaml
 import time
-from pathlib import Path
+import pytz
+import tempfile
+import signal
 import urllib.request
+from pathlib import Path
+from datetime import datetime
 from urllib.parse import unquote
+import Paperless
+import requests
+
+abort = False
+
+def handler(signum, frame):
+    print("Terminating...")
+    global abort 
+    abort = True
 
 def sanitise_path_string(path_str):
     for char in (':', '/', '\\', '|'):
@@ -286,17 +299,109 @@ class NoteStationExport:
             pass
         return
 
-    def toPaperless(self):
-        #TODO
-        pass
-
-if __name__ == "__main__":
-    export = "20230916_183417_28085_christophe.nsx"
-    archive = "NoteStation.tgz"
-
-    print(f"extracting notes from export {export} and archive {archive}")
-    export = NoteStation.NoteStationExport(export,archive)
-    export.toMarkdown('config.yml')
-    print("Done")
-
+    def toPaperless(self, configfile, dryRun = False, limit: int = None, restartFrom = None):
+        original_sigint_handler = signal.getsignal(signal.SIGINT)
+        # we setup a signal handler that will finish the import of the current file before gracefully ending.
+        signal.signal(signal.SIGINT, handler)
+        # load the config
+        with open(configfile, 'r') as ymlfile:
+            cfg = yaml.load(ymlfile, Loader=yaml.FullLoader)
+        paperless_url = cfg['paperless_url']
+        username = cfg.get('username',None)
+        password = cfg.get('password',None)
+        token = cfg.get('token',None)
+        timeout = cfg.get('timeout',5.0)
+        extensions_all = set(cfg['extensions'])
+        htmlnote_ignore = set(cfg['htmlnote_ignore'])
+        timezone = cfg['timezone']
+        if dryRun:
+            print("Dry run. Nothing will be sent to Paperless")
+        # initialize the paperless client
+        paperless = Paperless.Paperless(paperless_url=paperless_url, username=username, password=password, token=token, timeout=timeout)
+        # get the list of existing tags
+        knownTags = paperless.tags()
+        # create a tmp directory where to store attachments before upload
+        ignored = []
+        uploadCount = 0
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            # loop over the notes
+            for note_id,note in self.notes.items():
+                content = note.content
+                title = note.title
+                notebook = note.notebook
+                ctime = note.ctime
+                mtime = note.mtime 
+                tags = list(set([ t.lower() for t in note.tags]+[notebook.name.lower()]))
+                htmlnote = any([ "htm" in e for _,e in [ os.path.splitext(file) for file in [ attachment['name'] for attachment in note.attachment_list ] ]])
+                extensions = extensions_all if not htmlnote else extensions_all.difference(htmlnote_ignore)
+                # skip all notes until... 
+                if restartFrom is not None:
+                    if title != restartFrom:
+                        continue
+                    else:
+                        restartFrom = None
+                for attachment in note.attachment_list:
+                    # ignore attachments that are not in this list.
+                    _, file_extension = os.path.splitext(attachment['name'])
+                    if file_extension.lower() not in extensions:
+                        print(f"ignoring attachment {attachment['name']} in note {title}")
+                        ignored.append((title,attachment['name'],"Wrong extension"))
+                        continue
+                    # check for existing entry
+                    search = paperless.findDocument(query=f"title:'{title}'")
+                    found = False
+                    for entry in search["results"]:
+                        if entry["original_file_name"]==attachment['name']:
+                            found = True
+                            break
+                    # if we found the same filename with the same title, skip
+                    if found:
+                        print(f"ignoring duplicated {title} ({attachment['name']})")
+                        ignored.append((title,attachment['name'],"DUPLICATE"))
+                        continue 
+                    print(f"uploading {attachment['name']} as {title}")
+                    if dryRun:
+                        uploadCount += 1
+                        if abort or (limit is not None and uploadCount>=limit):
+                            break
+                        continue
+                    # extract the attachment
+                    if 'file_' + attachment['md5'] in self.nsx_file.namelist():
+                        (Path(tmpdirname) / attachment['name']).write_bytes(self.nsx_file.read('file_' + attachment['md5']))
+                    else:
+                        try:
+                            self.saveAttachmentFromArchive(note_id,attachment['md5'],path=tmpdirname,filename=attachment['name'])
+                        except KeyError:
+                            pass
+                    try:
+                        # check that tags exist, add them otherwise
+                        for tag in tags:
+                            if tag not in knownTags.keys():
+                                knownTags.update(paperless.addTag(tag))
+                        # post the document and wait for the task to be over
+                        fields = {'title': title, 'tags':[ knownTags[tag] for tag in tags ], 'created': datetime.fromtimestamp(ctime, pytz.timezone(timezone)).isoformat()}
+                        doc_pk = paperless.addDocument(Path(tmpdirname) / attachment['name'], fields=fields, wait = True)
+                        # delete the tmp file
+                        (Path(tmpdirname) / attachment['name']).unlink()
+                        # set the content as note
+                        if doc_pk is not None:
+                            # count as successful
+                            uploadCount += 1
+                            paperless.addNote(int(doc_pk), note=content)
+                        else:
+                            ignored.append((title,attachment['name'],"Failed upload"))
+                    except requests.exceptions.RequestException: 
+                        ignored.append((title,attachment['name'],"Exception"))
+                    if abort or (limit is not None and uploadCount>=limit):
+                        break
+                if abort or (limit is not None and uploadCount>=limit):
+                    break
+            # report
+            print(f"Uploaded {uploadCount} documents.")
+            if len(ignored):
+                print(f"The following {len(ignored)} documents were not uploaded:")
+                for note,doc,reason in ignored:
+                    print(f"{reason}: Note {title}: Document {doc}.")
+            print("Done")
+            signal.signal(signal.SIGINT, original_sigint_handler)
 
