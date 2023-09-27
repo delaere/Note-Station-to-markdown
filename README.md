@@ -12,6 +12,11 @@ After the upload to Paperless-ngx, you will get:
 2) Tags in Paperless-ngx corresponding to the Note Station tags;
 3) Notes associated to documents, containing a Markdown version of the note containing the attachment.
 
+The main input is the nsx export file produced by Note Station.
+Because this export may lack some of the attachments, the code adds the possibility to extract the missing content from 
+a manual archive of the Synology directory that contains the raw Note Station data.  
+That optional tar.gz backup should be made by connecting as root (by ssh) to the synology server.
+
 # Usage
 1) Export your Synology Note Station notebooks by: Setting -> Import and Export -> Export. You will get .nsx file.
 2) Adjust the .nsx file permission if required.
