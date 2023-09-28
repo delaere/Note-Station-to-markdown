@@ -18,6 +18,7 @@ a manual archive of the Synology directory that contains the raw Note Station da
 That optional tar.gz backup should be made by connecting as root (by ssh) to the synology server.
 
 # Usage
+0) Install the required dependencies (python 3.11 with the following packages: pandoc, pyyaml, pytz, requests) or build the Docker image (see below).
 1) Export your Synology Note Station notebooks by: Setting -> Import and Export -> Export. You will get .nsx file.
 2) Adjust the .nsx file permission if required.
 3) edit or create your own configuration yaml file (see `config_example.yml`)
@@ -45,6 +46,20 @@ options:
                         (Paperless only) restart from the given note title
 
 ```
+
+# Docker
+A docker image can be build from the provided Dockerfile. For example, using podman:
+```
+podman built -t NStoMarkdown .
+```
+
+That image contains a /Note-Station-to-markdown/data directory that can be mounted to provide inputs and to write outputs.
+For example:
+```
+podman run -v data:/Note-Station-to-markdown/data --rm NStoMarkdown -m -c data/config.yml -e data/export.nsx
+```
+In that example, config.yml must create the export in data, or you will not be able to retrieve it.
+
 
 # For [QOwnNotes](https://github.com/pbek/QOwnNotes) users
 There are several ways to get tags from converted notes to work in QOwnNotes:
