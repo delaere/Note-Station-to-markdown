@@ -377,7 +377,7 @@ class NoteStationExport:
                         # check that tags exist, add them otherwise
                         for tag in tags:
                             if tag not in knownTags.keys():
-                                knownTags.update(paperless.addTag(tag))
+                                knownTags.update(paperless.addTag(tag, matching_algorithm = 0))
                         # post the document and wait for the task to be over
                         fields = {'title': title, 'tags':[ knownTags[tag] for tag in tags ], 'created': datetime.fromtimestamp(ctime, pytz.timezone(timezone)).isoformat()}
                         doc_pk = paperless.addDocument(Path(tmpdirname) / attachment['name'], fields=fields, wait = True)
